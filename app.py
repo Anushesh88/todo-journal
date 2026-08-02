@@ -63,7 +63,9 @@ with h_col3:
     b_sync, b_theme = st.columns([1, 1])
     with b_sync:
         if st.button("🔄 Sync", help="Force sync and fetch fresh data from Google Sheets", use_container_width=True):
-            db.reconnect_and_sync()
+            st.session_state.db = DatabaseManager()
+            if hasattr(st.session_state.db, "reconnect_and_sync"):
+                st.session_state.db.reconnect_and_sync()
             st.rerun()
     with b_theme:
         theme_btn_text = "☀️ Light" if IS_DARK else "🌙 Dark"
