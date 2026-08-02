@@ -38,6 +38,9 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
             continue
         filtered_tasks.append(t)
 
+    # Push completed tasks to the very end of the stack
+    filtered_tasks.sort(key=lambda t: 1 if t.get("status") == "Completed" else 0)
+
     t_col1, t_col2 = st.columns([2.2, 1.2])
 
     with t_col1:

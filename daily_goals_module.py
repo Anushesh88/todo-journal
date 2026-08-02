@@ -59,7 +59,9 @@ def render_daily_goals_tab(db: DatabaseManager, active_date_str: str):
             st.info("No daily recurring goals found. Add your first daily goal using the panel on the right!")
         else:
             log_map = db.get_daily_log(active_date_str)
-            for g in goals:
+            # Push completed goals to the very end of the stack
+            sorted_goals = sorted(goals, key=lambda g: 1 if log_map.get(g["id"], False) else 0)
+            for g in sorted_goals:
                 gid = g["id"]
                 is_completed = log_map.get(gid, False)
 
