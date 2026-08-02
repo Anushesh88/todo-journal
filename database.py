@@ -132,12 +132,36 @@ class DatabaseManager:
                     
                     self.mode = "gsheets"
                     self._ensure_gsheet_tables()
+                    self.sync_unpushed_data()
                     return
             except Exception as e:
                 pass
 
         self.mode = "local"
         self._ensure_local_file()
+
+    def sync_unpushed_data(self):
+        """Scans local cache and pushes any missing rows to Google Sheets."""
+        if self.mode != "gsheets" or not self.spreadsheet:
+            return
+        data = self._load_local_data()
+        for table_name, items in data.items():
+            if not items or not isinstance(items, list):
+                continue
+            try:
+                ws = self._get_or_create_worksheet(table_name)
+                if not ws:
+                    continue
+                records = ws.get_all_records()
+                existing_ids = {str(r.get("id")) for r in records if "id" in r and r.get("id")}
+                for item in items:
+                    item_id = str(item.get("id", ""))
+                    if item_id and item_id not in existing_ids:
+                        row_vals = [str(v) for v in item.values()]
+                        ws.append_row(row_vals)
+                        existing_ids.add(item_id)
+            except Exception:
+                pass
 
     def _ensure_local_file(self):
         if not os.path.exists(self.local_file):
@@ -192,10 +216,19 @@ class DatabaseManager:
                 ws = self._get_or_create_worksheet(table_name)
                 if ws:
                     records = ws.get_all_records()
+                    # Check for unpushed items in local storage and sync to Google Sheets
+                    data = self._load_local_data()
+                    local_items = data.get(table_name, [])
+                    existing_ids = {str(r.get("id")) for r in records if "id" in r and r.get("id")}
+                    unpushed = [item for item in local_items if str(item.get("id")) and str(item.get("id")) not in existing_ids]
+                    for item in unpushed:
+                        try:
+                            ws.append_row([str(v) for v in item.values()])
+                            records.append(item)
+                        except Exception:
+                            pass
                     self._cache[table_name] = records
                     self._cache_time[table_name] = now
-                    # Keep local storage updated as fallback cache
-                    data = self._load_local_data()
                     data[table_name] = records
                     self._save_local_data(data)
                     return records
