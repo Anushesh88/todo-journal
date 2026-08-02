@@ -100,24 +100,29 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                             st.rerun()
 
                     with c2:
-                        # Calendar Sync Toggle / Link
-                        gcal_url = generate_gcal_url(
-                            title=f"[{task_type}] {title}",
-                            details=f"Task Priority: {priority}\nDeadline: {deadline}\nSubtasks count: {sub_total}",
-                            start_date=active_date_str,
-                            end_date=deadline
-                        )
-                        st.markdown(f'<a href="{gcal_url}" target="_blank" style="text-decoration:none;"><button style="background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid #3b82f6; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; cursor: pointer;">📅 Add to GCal</button></a>', unsafe_allow_html=True)
+                        # Optional Google Calendar Sync link controls
+                        show_cal = task.get("calendar_synced", True)
+                        if show_cal:
+                            gcal_url = generate_gcal_url(
+                                title=f"[{task_type}] {title}",
+                                details=f"Task Priority: {priority}\nTarget Date: {task.get('target_date')}\nDeadline: {deadline}\nSubtasks: {sub_total}",
+                                start_date=task.get("target_date", active_date_str),
+                                end_date=deadline
+                            )
+                            st.markdown(f'<a href="{gcal_url}" target="_blank" style="text-decoration:none;"><button style="background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid #3b82f6; border-radius: 6px; padding: 5px 12px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">📅 Google Cal Link</button></a>', unsafe_allow_html=True)
+                        else:
+                            st.caption("Calendar Unlinked")
 
                     with c3:
-                        ics_data = generate_ics_content(title, f"Deadline: {deadline}", active_date_str, deadline)
-                        st.download_button(
-                            label="📥 .ICS Calendar",
-                            data=ics_data,
-                            file_name=f"{title.replace(' ', '_')}.ics",
-                            mime="text/calendar",
-                            key=f"ics_dl_{tid}"
-                        )
+                        if show_cal:
+                            ics_data = generate_ics_content(title, f"Priority: {priority}\nDeadline: {deadline}", task.get("target_date", active_date_str), deadline)
+                            st.download_button(
+                                label="📥 .ICS File",
+                                data=ics_data,
+                                file_name=f"{title.replace(' ', '_')}.ics",
+                                mime="text/calendar",
+                                key=f"ics_dl_{tid}"
+                            )
 
                     with c4:
                         if st.button("🗑️", key=f"del_task_{tid}"):
@@ -168,24 +173,42 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
             t_target_date = st.date_input("Target Execution Date", datetime.date.today())
             t_deadline = st.date_input("Final Deadline", datetime.date.today() + datetime.timedelta(days=3))
 
-            st.markdown("##### 📅 Calendar Link Preference")
-            sync_cal = st.checkbox("Link Task to Google Calendar", value=True, help="Enable 1-click Google Calendar integration for this task")
+            st.markdown("##### 📅 Google Calendar Preference")
+            sync_cal = st.checkbox("Link Task to Google Calendar", value=True, help="Optionally link task to Google Calendar")
 
             sub_task_create = st.form_submit_button("🚀 Create Task", use_container_width=True)
 
             if sub_task_create:
                 if t_title.strip():
                     is_lt = (t_type == "Long-Term")
+                    target_str = t_target_date.strftime("%Y-%m-%d")
+                    deadline_str = t_deadline.strftime("%Y-%m-%d")
                     tid = db.add_task(
                         title=t_title.strip(),
                         task_type=t_type,
                         category=t_cat,
                         priority=t_priority,
-                        target_date=t_target_date.strftime("%Y-%m-%d"),
-                        deadline=t_deadline.strftime("%Y-%m-%d"),
+                        target_date=target_str,
+                        deadline=deadline_str,
                         is_longterm=is_lt
                     )
                     st.success(f"Task '{t_title}' created successfully!")
+
+                    if sync_cal:
+                        cal_link = generate_gcal_url(
+                            title=f"[{t_type}] {t_title.strip()}",
+                            details=f"Category: {t_cat}\nPriority: {t_priority}\nTarget Date: {target_str}\nDeadline: {deadline_str}",
+                            start_date=target_str,
+                            end_date=deadline_str
+                        )
+                        st.markdown(f"""
+                        <div style="margin-top: 0.5rem; padding: 0.8rem; background: rgba(59, 130, 246, 0.1); border: 1px solid #3b82f6; border-radius: 8px;">
+                            📅 <strong>Google Calendar Link Ready:</strong><br>
+                            <a href="{cal_link}" target="_blank" style="display: inline-block; margin-top: 0.4rem; padding: 0.35rem 0.8rem; background: #3b82f6; color: white; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 0.85rem;">
+                                ➕ Add Task to Google Calendar
+                            </a>
+                        </div>
+                        """, unsafe_allow_html=True)
                     st.rerun()
                 else:
                     st.warning("Task title cannot be empty.")
