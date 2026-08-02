@@ -128,35 +128,36 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                             db.delete_task(tid)
                             st.rerun()
 
-                    # Subtasks / Mini-Tasks section for ALL Task Types (Collapsed by default)
-                    with st.expander(f"🧩 Subtasks / Mini-Tasks ({sub_completed}/{sub_total}) - {sub_pct}% Done", expanded=False):
-                        if sub_total > 0:
-                            st.progress(sub_pct / 100.0)
+                    # Subtasks / Mini-Tasks section for Short-Term & Long-Term Tasks ONLY
+                    if task_type != "Today's Task":
+                        with st.expander(f"🧩 Subtasks / Mini-Tasks ({sub_completed}/{sub_total}) - {sub_pct}% Done", expanded=False):
+                            if sub_total > 0:
+                                st.progress(sub_pct / 100.0)
 
-                        for st_item in subtasks:
-                            st_id = st_item["id"]
-                            st_comp = st_item.get("completed", False)
-                            s_c1, s_c2, s_c3 = st.columns([0.1, 0.8, 0.1])
-                            with s_c1:
-                                st_chk = st.checkbox(label=f"Complete subtask {st_item['title']}", value=st_comp, key=f"st_chk_{st_id}", label_visibility="collapsed")
-                                if st_chk != st_comp:
-                                    db.toggle_subtask(st_id, st_chk)
-                                    st.rerun()
-                            with s_c2:
-                                st_style = "text-decoration: line-through; opacity: 0.6;" if st_comp else ""
-                                st.markdown(f"<span style='{st_style} font-size: 0.9rem;'>{st_item['title']}</span>", unsafe_allow_html=True)
-                            with s_c3:
-                                if st.button("❌", key=f"st_del_{st_id}"):
-                                    db.delete_subtask(st_id)
-                                    st.rerun()
+                            for st_item in subtasks:
+                                st_id = st_item["id"]
+                                st_comp = st_item.get("completed", False)
+                                s_c1, s_c2, s_c3 = st.columns([0.1, 0.8, 0.1])
+                                with s_c1:
+                                    st_chk = st.checkbox(label=f"Complete subtask {st_item['title']}", value=st_comp, key=f"st_chk_{st_id}", label_visibility="collapsed")
+                                    if st_chk != st_comp:
+                                        db.toggle_subtask(st_id, st_chk)
+                                        st.rerun()
+                                with s_c2:
+                                    st_style = "text-decoration: line-through; opacity: 0.6;" if st_comp else ""
+                                    st.markdown(f"<span style='{st_style} font-size: 0.9rem;'>{st_item['title']}</span>", unsafe_allow_html=True)
+                                with s_c3:
+                                    if st.button("❌", key=f"st_del_{st_id}"):
+                                        db.delete_subtask(st_id)
+                                        st.rerun()
 
-                        # Add mini task inline input
-                        with st.form(key=f"add_subtask_form_{tid}", clear_on_submit=True):
-                            sub_title = st.text_input("Add Mini Task", placeholder="e.g. Draft chapter 1, Prepare slide deck", label_visibility="collapsed")
-                            sub_sub = st.form_submit_button("➕ Add Mini Task", use_container_width=True)
-                            if sub_sub and sub_title.strip():
-                                db.add_subtask(tid, sub_title.strip())
-                                st.rerun()
+                            # Add mini task inline input
+                            with st.form(key=f"add_subtask_form_{tid}", clear_on_submit=True):
+                                sub_title = st.text_input("Add Mini Task", placeholder="e.g. Draft chapter 1, Prepare slide deck", label_visibility="collapsed")
+                                sub_sub = st.form_submit_button("➕ Add Mini Task", use_container_width=True)
+                                if sub_sub and sub_title.strip():
+                                    db.add_subtask(tid, sub_title.strip())
+                                    st.rerun()
 
                     st.markdown("<hr style='margin: 0.8rem 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'>", unsafe_allow_html=True)
 
