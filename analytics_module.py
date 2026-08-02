@@ -12,11 +12,11 @@ def render_analytics_tab(db: DatabaseManager, is_dark: bool):
     tasks = db.get_tasks()
     goals = db.get_daily_goals()
 
-    # Calculate last 7 days scores
+    # Calculate last 14 days scores
     dates = [(datetime.date.today() - datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(13, -1, -1)]
     score_data = []
     for d in dates:
-        pct, comp, total = db.calculate_daily_score(d)
+        pct, comp, total = db.calculate_daily_score(d, goals_list=goals)
         score_data.append({"Date": d, "Score": pct, "Completed": comp, "Total": total})
 
     df_scores = pd.DataFrame(score_data)

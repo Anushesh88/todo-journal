@@ -92,6 +92,9 @@ class DatabaseManager:
         self.client = None
         self.spreadsheet = None
         self.local_file = LOCAL_DB_FILE
+        self._cache = {}
+        self._cache_time = {}
+        self.cache_ttl = 15  # 15 seconds TTL
         self._init_connection()
 
     def _init_connection(self):
@@ -170,36 +173,50 @@ class DatabaseManager:
             except Exception:
                 return None
 
-    def _ensure_gsheet_tables(self):
-        """Creates required worksheets if missing in Google Sheets."""
-        try:
-            for table, items in DEFAULT_INITIAL_DATA.items():
-                headers = list(items[0].keys()) if items else None
-                self._get_or_create_worksheet(table, headers)
-        except Exception as e:
-            pass
+    def _invalidate_cache(self, table_name: str):
+        """Invalidate cache for a specific table after mutation."""
+        if table_name in self._cache:
+            del self._cache[table_name]
+        if table_name in self._cache_time:
+            del self._cache_time[table_name]
+
+    def _get_table_records(self, table_name: str, force_refresh: bool = False) -> list:
+        """High performance cached record fetcher."""
+        now = datetime.datetime.now().timestamp()
+        if not force_refresh and table_name in self._cache and (now - self._cache_time.get(table_name, 0)) < self.cache_ttl:
+            return self._cache[table_name]
+
+        records = []
+        if self.mode == "gsheets":
+            try:
+                ws = self._get_or_create_worksheet(table_name)
+                if ws:
+                    records = ws.get_all_records()
+                    self._cache[table_name] = records
+                    self._cache_time[table_name] = now
+                    # Keep local storage updated as fallback cache
+                    data = self._load_local_data()
+                    data[table_name] = records
+                    self._save_local_data(data)
+                    return records
+            except Exception:
+                pass
+
+        data = self._load_local_data()
+        records = data.get(table_name, [])
+        self._cache[table_name] = records
+        self._cache_time[table_name] = now
+        return records
 
     # -------------------------------------------------------------
     # DAILY GOALS
     # -------------------------------------------------------------
     def get_daily_goals(self) -> list:
-        if self.mode == "gsheets":
-            try:
-                ws = self._get_or_create_worksheet("Daily_Goals")
-                if ws:
-                    records = ws.get_all_records()
-                    goals = [r for r in records if str(r.get("active", "True")).strip().lower() in ["true", "1", "yes", "t", ""]]
-                    if goals:
-                        data = self._load_local_data()
-                        data["Daily_Goals"] = goals
-                        self._save_local_data(data)
-                        return goals
-            except Exception:
-                pass
-        data = self._load_local_data()
-        return [g for g in data.get("Daily_Goals", []) if str(g.get("active", "True")).strip().lower() in ["true", "1", "yes", "t", ""]]
+        records = self._get_table_records("Daily_Goals")
+        return [r for r in records if str(r.get("active", "True")).strip().lower() in ["true", "1", "yes", "t", ""]]
 
     def add_daily_goal(self, title: str, category: str = "General") -> str:
+        self._invalidate_cache("Daily_Goals")
         goal_id = f"dg_{int(datetime.datetime.now().timestamp())}"
         created_at = datetime.date.today().strftime("%Y-%m-%d")
         new_goal = {
@@ -209,7 +226,6 @@ class DatabaseManager:
             "created_at": created_at,
             "active": True
         }
-        # Always update local cache
         data = self._load_local_data()
         if "Daily_Goals" not in data:
             data["Daily_Goals"] = []
@@ -226,6 +242,7 @@ class DatabaseManager:
         return goal_id
 
     def delete_daily_goal(self, goal_id: str):
+        self._invalidate_cache("Daily_Goals")
         data = self._load_local_data()
         data["Daily_Goals"] = [g for g in data.get("Daily_Goals", []) if str(g["id"]) != str(goal_id)]
         self._save_local_data(data)
@@ -247,45 +264,33 @@ class DatabaseManager:
     # -------------------------------------------------------------
     def get_daily_log(self, date_str: str) -> dict:
         """Returns map of goal_id -> bool completion status for date."""
-        if self.mode == "local":
-            data = self._load_local_data()
-            logs = [l for l in data.get("Daily_Log", []) if l.get("date") == date_str]
-            return {l["goal_id"]: l["completed"] for l in logs}
-        else:
-            try:
-                ws = self._get_or_create_worksheet("Daily_Log")
-                if not ws:
-                    return {}
-                records = ws.get_all_records()
-                date_logs = [r for r in records if str(r.get("date")) == date_str]
-                return {r["goal_id"]: str(r.get("completed")).lower() in ["true", "1"] for r in date_logs}
-            except Exception:
-                data = self._load_local_data()
-                logs = [l for l in data.get("Daily_Log", []) if l.get("date") == date_str]
-                return {l["goal_id"]: l["completed"] for l in logs}
+        records = self._get_table_records("Daily_Log")
+        date_logs = [r for r in records if str(r.get("date")) == date_str]
+        return {r["goal_id"]: str(r.get("completed")).lower() in ["true", "1"] for r in date_logs}
 
     def toggle_daily_goal(self, goal_id: str, date_str: str, completed: bool):
-        if self.mode == "local":
-            data = self._load_local_data()
-            logs = data.get("Daily_Log", [])
-            found = False
-            for l in logs:
-                if l.get("date") == date_str and l.get("goal_id") == goal_id:
-                    l["completed"] = completed
-                    l["updated_at"] = datetime.datetime.now().isoformat()
-                    found = True
-                    break
-            if not found:
-                logs.append({
-                    "id": f"log_{int(datetime.datetime.now().timestamp())}",
-                    "date": date_str,
-                    "goal_id": goal_id,
-                    "completed": completed,
-                    "updated_at": datetime.datetime.now().isoformat()
-                })
-            data["Daily_Log"] = logs
-            self._save_local_data(data)
-        else:
+        self._invalidate_cache("Daily_Log")
+        data = self._load_local_data()
+        logs = data.get("Daily_Log", [])
+        found = False
+        for l in logs:
+            if l.get("date") == date_str and l.get("goal_id") == goal_id:
+                l["completed"] = completed
+                l["updated_at"] = datetime.datetime.now().isoformat()
+                found = True
+                break
+        if not found:
+            logs.append({
+                "id": f"log_{int(datetime.datetime.now().timestamp())}",
+                "date": date_str,
+                "goal_id": goal_id,
+                "completed": completed,
+                "updated_at": datetime.datetime.now().isoformat()
+            })
+        data["Daily_Log"] = logs
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Daily_Log")
                 if ws:
@@ -303,9 +308,9 @@ class DatabaseManager:
             except Exception:
                 pass
 
-    def calculate_daily_score(self, date_str: str) -> tuple:
+    def calculate_daily_score(self, date_str: str, goals_list: list = None) -> tuple:
         """Returns (score_percentage, completed_count, total_count)."""
-        goals = self.get_daily_goals()
+        goals = goals_list if goals_list is not None else self.get_daily_goals()
         if not goals:
             return 0.0, 0, 0
         log_map = self.get_daily_log(date_str)
@@ -318,20 +323,10 @@ class DatabaseManager:
     # TASKS (SHORT-TERM & LONG-TERM)
     # -------------------------------------------------------------
     def get_tasks(self) -> list:
-        if self.mode == "local":
-            data = self._load_local_data()
-            return data.get("Tasks", [])
-        else:
-            try:
-                ws = self._get_or_create_worksheet("Tasks")
-                if not ws:
-                    return []
-                return ws.get_all_records()
-            except Exception:
-                data = self._load_local_data()
-                return data.get("Tasks", [])
+        return self._get_table_records("Tasks")
 
     def add_task(self, title: str, task_type: str, category: str, priority: str, target_date: str, deadline: str, is_longterm: bool) -> str:
+        self._invalidate_cache("Tasks")
         task_id = f"t_{int(datetime.datetime.now().timestamp())}"
         created_at = datetime.date.today().strftime("%Y-%m-%d")
         new_task = {
@@ -348,32 +343,33 @@ class DatabaseManager:
             "is_longterm": is_longterm,
             "calendar_synced": False
         }
-        if self.mode == "local":
-            data = self._load_local_data()
-            data["Tasks"].append(new_task)
-            self._save_local_data(data)
-        else:
+        data = self._load_local_data()
+        if "Tasks" not in data:
+            data["Tasks"] = []
+        data["Tasks"].append(new_task)
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Tasks")
                 if ws:
                     ws.append_row(list(new_task.values()))
             except Exception:
-                data = self._load_local_data()
-                data["Tasks"].append(new_task)
-                self._save_local_data(data)
+                pass
         return task_id
 
     def update_task_status(self, task_id: str, status: str):
+        self._invalidate_cache("Tasks")
         completed_at = datetime.date.today().strftime("%Y-%m-%d") if status == "Completed" else ""
-        if self.mode == "local":
-            data = self._load_local_data()
-            for t in data.get("Tasks", []):
-                if t["id"] == task_id:
-                    t["status"] = status
-                    t["completed_at"] = completed_at
-                    break
-            self._save_local_data(data)
-        else:
+        data = self._load_local_data()
+        for t in data.get("Tasks", []):
+            if t["id"] == task_id:
+                t["status"] = status
+                t["completed_at"] = completed_at
+                break
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Tasks")
                 if ws:
@@ -387,12 +383,14 @@ class DatabaseManager:
                 pass
 
     def delete_task(self, task_id: str):
-        if self.mode == "local":
-            data = self._load_local_data()
-            data["Tasks"] = [t for t in data.get("Tasks", []) if t["id"] != task_id]
-            data["Subtasks"] = [st for st in data.get("Subtasks", []) if st["task_id"] != task_id]
-            self._save_local_data(data)
-        else:
+        self._invalidate_cache("Tasks")
+        self._invalidate_cache("Subtasks")
+        data = self._load_local_data()
+        data["Tasks"] = [t for t in data.get("Tasks", []) if t["id"] != task_id]
+        data["Subtasks"] = [st for st in data.get("Subtasks", []) if st["task_id"] != task_id]
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Tasks")
                 if ws:
@@ -409,16 +407,22 @@ class DatabaseManager:
     # -------------------------------------------------------------
     def perform_task_rollover(self, today_str: str) -> int:
         rolled_over_count = 0
-        if self.mode == "local":
-            data = self._load_local_data()
-            tasks = data.get("Tasks", [])
-            for t in tasks:
-                if t.get("status") != "Completed" and t.get("target_date") and t.get("target_date") < today_str:
-                    t["target_date"] = today_str
-                    rolled_over_count += 1
-            if rolled_over_count > 0:
-                self._save_local_data(data)
-        else:
+        tasks = self.get_tasks()
+        to_rollover = [t for t in tasks if t.get("status") != "Completed" and t.get("target_date") and t.get("target_date") < today_str]
+        if not to_rollover:
+            return 0
+
+        self._invalidate_cache("Tasks")
+        data = self._load_local_data()
+        local_tasks = data.get("Tasks", [])
+        for t in local_tasks:
+            if t.get("status") != "Completed" and t.get("target_date") and t.get("target_date") < today_str:
+                t["target_date"] = today_str
+                rolled_over_count += 1
+        if rolled_over_count > 0:
+            self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Tasks")
                 if ws:
@@ -428,7 +432,6 @@ class DatabaseManager:
                         target_date = str(r.get("target_date", ""))
                         if status != "Completed" and target_date and target_date < today_str:
                             ws.update_cell(idx, 7, today_str)
-                            rolled_over_count += 1
             except Exception:
                 pass
         return rolled_over_count
@@ -437,21 +440,11 @@ class DatabaseManager:
     # SUBTASKS / MINI-TASKS
     # -------------------------------------------------------------
     def get_subtasks(self, task_id: str) -> list:
-        if self.mode == "local":
-            data = self._load_local_data()
-            return [st for st in data.get("Subtasks", []) if st.get("task_id") == task_id]
-        else:
-            try:
-                ws = self._get_or_create_worksheet("Subtasks")
-                if not ws:
-                    return []
-                records = ws.get_all_records()
-                return [r for r in records if str(r.get("task_id")) == str(task_id)]
-            except Exception:
-                data = self._load_local_data()
-                return [st for st in data.get("Subtasks", []) if st.get("task_id") == task_id]
+        records = self._get_table_records("Subtasks")
+        return [r for r in records if str(r.get("task_id")) == str(task_id)]
 
     def add_subtask(self, task_id: str, title: str) -> str:
+        self._invalidate_cache("Subtasks")
         st_id = f"st_{int(datetime.datetime.now().timestamp())}"
         new_st = {
             "id": st_id,
@@ -460,30 +453,31 @@ class DatabaseManager:
             "completed": False,
             "created_at": datetime.date.today().strftime("%Y-%m-%d")
         }
-        if self.mode == "local":
-            data = self._load_local_data()
-            data["Subtasks"].append(new_st)
-            self._save_local_data(data)
-        else:
+        data = self._load_local_data()
+        if "Subtasks" not in data:
+            data["Subtasks"] = []
+        data["Subtasks"].append(new_st)
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Subtasks")
                 if ws:
                     ws.append_row([st_id, task_id, title, "False", datetime.date.today().strftime("%Y-%m-%d")])
             except Exception:
-                data = self._load_local_data()
-                data["Subtasks"].append(new_st)
-                self._save_local_data(data)
+                pass
         return st_id
 
     def toggle_subtask(self, subtask_id: str, completed: bool):
-        if self.mode == "local":
-            data = self._load_local_data()
-            for st in data.get("Subtasks", []):
-                if st["id"] == subtask_id:
-                    st["completed"] = completed
-                    break
-            self._save_local_data(data)
-        else:
+        self._invalidate_cache("Subtasks")
+        data = self._load_local_data()
+        for st in data.get("Subtasks", []):
+            if st["id"] == subtask_id:
+                st["completed"] = completed
+                break
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Subtasks")
                 if ws:
@@ -496,11 +490,12 @@ class DatabaseManager:
                 pass
 
     def delete_subtask(self, subtask_id: str):
-        if self.mode == "local":
-            data = self._load_local_data()
-            data["Subtasks"] = [st for st in data.get("Subtasks", []) if st["id"] != subtask_id]
-            self._save_local_data(data)
-        else:
+        self._invalidate_cache("Subtasks")
+        data = self._load_local_data()
+        data["Subtasks"] = [st for st in data.get("Subtasks", []) if st["id"] != subtask_id]
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Subtasks")
                 if ws:
@@ -516,24 +511,12 @@ class DatabaseManager:
     # JOURNAL ENTRIES
     # -------------------------------------------------------------
     def get_journal_entry(self, date_str: str) -> dict:
-        if self.mode == "local":
-            data = self._load_local_data()
-            entries = [e for e in data.get("Journal_Entries", []) if e.get("date") == date_str]
-            return entries[0] if entries else {}
-        else:
-            try:
-                ws = self._get_or_create_worksheet("Journal_Entries")
-                if not ws:
-                    return {}
-                records = ws.get_all_records()
-                entries = [r for r in records if str(r.get("date")) == date_str]
-                return entries[0] if entries else {}
-            except Exception:
-                data = self._load_local_data()
-                entries = [e for e in data.get("Journal_Entries", []) if e.get("date") == date_str]
-                return entries[0] if entries else {}
+        records = self._get_table_records("Journal_Entries")
+        entries = [r for r in records if str(r.get("date")) == date_str]
+        return entries[0] if entries else {}
 
     def save_journal_entry(self, date_str: str, mood: str, main_text: str, wins: str, gratitude: str, score_pct: float):
+        self._invalidate_cache("Journal_Entries")
         entry_id = f"j_{date_str}"
         entry_data = {
             "id": entry_id,
@@ -545,20 +528,20 @@ class DatabaseManager:
             "score_pct": score_pct,
             "created_at": datetime.datetime.now().isoformat()
         }
-        if self.mode == "local":
-            data = self._load_local_data()
-            entries = data.get("Journal_Entries", [])
-            found = False
-            for idx, e in enumerate(entries):
-                if e.get("date") == date_str:
-                    entries[idx] = entry_data
-                    found = True
-                    break
-            if not found:
-                entries.append(entry_data)
-            data["Journal_Entries"] = entries
-            self._save_local_data(data)
-        else:
+        data = self._load_local_data()
+        entries = data.get("Journal_Entries", [])
+        found = False
+        for idx, e in enumerate(entries):
+            if e.get("date") == date_str:
+                entries[idx] = entry_data
+                found = True
+                break
+        if not found:
+            entries.append(entry_data)
+        data["Journal_Entries"] = entries
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Journal_Entries")
                 if ws:
@@ -575,37 +558,16 @@ class DatabaseManager:
                     else:
                         ws.append_row([str(v) for v in row_vals])
             except Exception:
-                data = self._load_local_data()
-                entries = data.get("Journal_Entries", [])
-                found = False
-                for idx, e in enumerate(entries):
-                    if e.get("date") == date_str:
-                        entries[idx] = entry_data
-                        found = True
-                        break
-                if not found:
-                    entries.append(entry_data)
-                data["Journal_Entries"] = entries
-                self._save_local_data(data)
+                pass
 
     # -------------------------------------------------------------
     # NOTES ENGINE
     # -------------------------------------------------------------
     def get_notes(self) -> list:
-        if self.mode == "local":
-            data = self._load_local_data()
-            return data.get("Notes", [])
-        else:
-            try:
-                ws = self._get_or_create_worksheet("Notes")
-                if not ws:
-                    return []
-                return ws.get_all_records()
-            except Exception:
-                data = self._load_local_data()
-                return data.get("Notes", [])
+        return self._get_table_records("Notes")
 
     def add_note(self, title: str, category: str, content: str, tags: str = "", is_pinned: bool = False, color: str = "blue") -> str:
+        self._invalidate_cache("Notes")
         note_id = f"n_{int(datetime.datetime.now().timestamp())}"
         today_str = datetime.date.today().strftime("%Y-%m-%d")
         new_note = {
@@ -619,41 +581,38 @@ class DatabaseManager:
             "created_at": today_str,
             "updated_at": today_str
         }
-        if self.mode == "local":
-            data = self._load_local_data()
-            if "Notes" not in data:
-                data["Notes"] = []
-            data["Notes"].append(new_note)
-            self._save_local_data(data)
-        else:
+        data = self._load_local_data()
+        if "Notes" not in data:
+            data["Notes"] = []
+        data["Notes"].append(new_note)
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Notes")
                 if ws:
                     ws.append_row(list(new_note.values()))
             except Exception:
-                data = self._load_local_data()
-                if "Notes" not in data:
-                    data["Notes"] = []
-                data["Notes"].append(new_note)
-                self._save_local_data(data)
+                pass
         return note_id
 
     def update_note(self, note_id: str, title: str, category: str, content: str, tags: str = "", is_pinned: bool = False, color: str = "blue"):
+        self._invalidate_cache("Notes")
         updated_at = datetime.date.today().strftime("%Y-%m-%d")
-        if self.mode == "local":
-            data = self._load_local_data()
-            for n in data.get("Notes", []):
-                if n["id"] == note_id:
-                    n["title"] = title
-                    n["category"] = category
-                    n["content"] = content
-                    n["tags"] = tags
-                    n["is_pinned"] = is_pinned
-                    n["color"] = color
-                    n["updated_at"] = updated_at
-                    break
-            self._save_local_data(data)
-        else:
+        data = self._load_local_data()
+        for n in data.get("Notes", []):
+            if n["id"] == note_id:
+                n["title"] = title
+                n["category"] = category
+                n["content"] = content
+                n["tags"] = tags
+                n["is_pinned"] = is_pinned
+                n["color"] = color
+                n["updated_at"] = updated_at
+                break
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Notes")
                 if ws:
@@ -672,14 +631,15 @@ class DatabaseManager:
                 pass
 
     def toggle_note_pin(self, note_id: str, is_pinned: bool):
-        if self.mode == "local":
-            data = self._load_local_data()
-            for n in data.get("Notes", []):
-                if n["id"] == note_id:
-                    n["is_pinned"] = is_pinned
-                    break
-            self._save_local_data(data)
-        else:
+        self._invalidate_cache("Notes")
+        data = self._load_local_data()
+        for n in data.get("Notes", []):
+            if n["id"] == note_id:
+                n["is_pinned"] = is_pinned
+                break
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Notes")
                 if ws:
@@ -692,11 +652,12 @@ class DatabaseManager:
                 pass
 
     def delete_note(self, note_id: str):
-        if self.mode == "local":
-            data = self._load_local_data()
-            data["Notes"] = [n for n in data.get("Notes", []) if n["id"] != note_id]
-            self._save_local_data(data)
-        else:
+        self._invalidate_cache("Notes")
+        data = self._load_local_data()
+        data["Notes"] = [n for n in data.get("Notes", []) if n["id"] != note_id]
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Notes")
                 if ws:
