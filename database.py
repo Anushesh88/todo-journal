@@ -91,6 +91,7 @@ class DatabaseManager:
         self.mode = "local"  # 'gsheets' or 'local'
         self.client = None
         self.spreadsheet = None
+        self.connection_error = None
         self.local_file = LOCAL_DB_FILE
         self._cache = {}
         self._cache_time = {}
@@ -107,6 +108,9 @@ class DatabaseManager:
                         "https://www.googleapis.com/auth/drive"
                     ]
                     creds_dict = dict(st.secrets["gcp_service_account"])
+                    if "private_key" in creds_dict and isinstance(creds_dict["private_key"], str):
+                        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
                     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
                     self.client = gspread.authorize(creds)
                     
@@ -131,14 +135,25 @@ class DatabaseManager:
                             return
                     
                     self.mode = "gsheets"
+                    self.connection_error = None
                     self._ensure_gsheet_tables()
                     self.sync_unpushed_data()
                     return
             except Exception as e:
-                pass
+                self.connection_error = str(e)
 
         self.mode = "local"
         self._ensure_local_file()
+
+    def reconnect_and_sync(self):
+        """Forces re-initializing connection and pulling fresh data from Google Sheets."""
+        self._cache.clear()
+        self._cache_time.clear()
+        self._init_connection()
+        if self.mode == "gsheets":
+            self.sync_unpushed_data()
+            for table in ["Daily_Goals", "Daily_Log", "Tasks", "Subtasks", "Notes", "Journal_Entries"]:
+                self._get_table_records(table, force_refresh=True)
 
     def sync_unpushed_data(self):
         """Scans local cache and pushes any missing rows to Google Sheets."""

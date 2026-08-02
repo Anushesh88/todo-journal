@@ -60,8 +60,14 @@ with h_col2:
 
 with h_col3:
     st.markdown("<div style='height: 1.7rem;'></div>", unsafe_allow_html=True)
-    theme_btn_text = "☀️ Light Theme" if IS_DARK else "🌙 Dark Theme"
-    st.button(theme_btn_text, on_click=toggle_theme, use_container_width=True)
+    b_sync, b_theme = st.columns([1, 1])
+    with b_sync:
+        if st.button("🔄 Sync", help="Force sync and fetch fresh data from Google Sheets", use_container_width=True):
+            db.reconnect_and_sync()
+            st.rerun()
+    with b_theme:
+        theme_btn_text = "☀️ Light" if IS_DARK else "🌙 Dark"
+        st.button(theme_btn_text, on_click=toggle_theme, use_container_width=True)
 
 # -------------------------------------------------------------
 # Google Sheets Setup Expander (Helpful for deployment)
