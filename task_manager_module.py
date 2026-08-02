@@ -128,8 +128,8 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                             db.delete_task(tid)
                             st.rerun()
 
-                    # Subtasks / Mini-Tasks section for ALL Task Types
-                    with st.expander(f"🧩 Subtasks / Mini-Tasks ({sub_completed}/{sub_total}) - {sub_pct}% Done", expanded=not is_completed):
+                    # Subtasks / Mini-Tasks section for ALL Task Types (Collapsed by default)
+                    with st.expander(f"🧩 Subtasks / Mini-Tasks ({sub_completed}/{sub_total}) - {sub_pct}% Done", expanded=False):
                         if sub_total > 0:
                             st.progress(sub_pct / 100.0)
 
