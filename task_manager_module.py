@@ -21,7 +21,7 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
     # Filter section
     col_f1, col_f2, col_f3 = st.columns([1, 1, 1])
     with col_f1:
-        type_filter = st.selectbox("Task Type", ["All Types", "Short-Term", "Long-Term"])
+        type_filter = st.selectbox("Task Type", ["All Types", "Today's Task", "Short-Term", "Long-Term"])
     with col_f2:
         status_filter = st.selectbox("Status", ["All", "Pending", "In Progress", "Completed"])
     with col_f3:
@@ -55,15 +55,15 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                 is_longterm = task.get("is_longterm", False) or (task_type == "Long-Term")
                 is_completed = status == "Completed"
 
-                # Subtask data
-                subtasks = db.get_subtasks(tid) if is_longterm else []
+                # Subtask data for ALL task types
+                subtasks = db.get_subtasks(tid)
                 sub_completed = sum(1 for st_item in subtasks if st_item.get("completed", False))
                 sub_total = len(subtasks)
                 sub_pct = int((sub_completed / sub_total) * 100) if sub_total > 0 else 0
 
                 # Priority Badge
                 p_cls = "badge-red" if priority == "High" else ("badge-amber" if priority == "Medium" else "badge-blue")
-                type_cls = "badge-purple" if is_longterm else "badge-blue"
+                type_cls = "badge-green" if task_type == "Today's Task" else ("badge-purple" if is_longterm else "badge-blue")
 
                 with st.container():
                     st.markdown(f"""
@@ -100,7 +100,6 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                             st.rerun()
 
                     with c2:
-                        # Optional Google Calendar Sync link controls
                         show_cal = task.get("calendar_synced", True)
                         if show_cal:
                             gcal_url = generate_gcal_url(
@@ -129,36 +128,35 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                             db.delete_task(tid)
                             st.rerun()
 
-                    # Subtasks section for Long-Term Tasks
-                    if is_longterm:
-                        with st.expander(f"🧩 Subtasks / Mini-Tasks ({sub_completed}/{sub_total}) - {sub_pct}% Done", expanded=not is_completed):
-                            if sub_total > 0:
-                                st.progress(sub_pct / 100.0)
+                    # Subtasks / Mini-Tasks section for ALL Task Types
+                    with st.expander(f"🧩 Subtasks / Mini-Tasks ({sub_completed}/{sub_total}) - {sub_pct}% Done", expanded=not is_completed):
+                        if sub_total > 0:
+                            st.progress(sub_pct / 100.0)
 
-                            for st_item in subtasks:
-                                st_id = st_item["id"]
-                                st_comp = st_item.get("completed", False)
-                                s_c1, s_c2, s_c3 = st.columns([0.1, 0.8, 0.1])
-                                with s_c1:
-                                    st_chk = st.checkbox(label=f"Complete subtask {st_item['title']}", value=st_comp, key=f"st_chk_{st_id}", label_visibility="collapsed")
-                                    if st_chk != st_comp:
-                                        db.toggle_subtask(st_id, st_chk)
-                                        st.rerun()
-                                with s_c2:
-                                    st_style = "text-decoration: line-through; opacity: 0.6;" if st_comp else ""
-                                    st.markdown(f"<span style='{st_style} font-size: 0.9rem;'>{st_item['title']}</span>", unsafe_allow_html=True)
-                                with s_c3:
-                                    if st.button("❌", key=f"st_del_{st_id}"):
-                                        db.delete_subtask(st_id)
-                                        st.rerun()
-
-                            # Add mini task inline input
-                            with st.form(key=f"add_subtask_form_{tid}", clear_on_submit=True):
-                                sub_title = st.text_input("Add Mini Task", placeholder="e.g. Draft chapter 1, Prepare slide deck", label_visibility="collapsed")
-                                sub_sub = st.form_submit_button("➕ Add Mini Task", use_container_width=True)
-                                if sub_sub and sub_title.strip():
-                                    db.add_subtask(tid, sub_title.strip())
+                        for st_item in subtasks:
+                            st_id = st_item["id"]
+                            st_comp = st_item.get("completed", False)
+                            s_c1, s_c2, s_c3 = st.columns([0.1, 0.8, 0.1])
+                            with s_c1:
+                                st_chk = st.checkbox(label=f"Complete subtask {st_item['title']}", value=st_comp, key=f"st_chk_{st_id}", label_visibility="collapsed")
+                                if st_chk != st_comp:
+                                    db.toggle_subtask(st_id, st_chk)
                                     st.rerun()
+                            with s_c2:
+                                st_style = "text-decoration: line-through; opacity: 0.6;" if st_comp else ""
+                                st.markdown(f"<span style='{st_style} font-size: 0.9rem;'>{st_item['title']}</span>", unsafe_allow_html=True)
+                            with s_c3:
+                                if st.button("❌", key=f"st_del_{st_id}"):
+                                    db.delete_subtask(st_id)
+                                    st.rerun()
+
+                        # Add mini task inline input
+                        with st.form(key=f"add_subtask_form_{tid}", clear_on_submit=True):
+                            sub_title = st.text_input("Add Mini Task", placeholder="e.g. Draft chapter 1, Prepare slide deck", label_visibility="collapsed")
+                            sub_sub = st.form_submit_button("➕ Add Mini Task", use_container_width=True)
+                            if sub_sub and sub_title.strip():
+                                db.add_subtask(tid, sub_title.strip())
+                                st.rerun()
 
                     st.markdown("<hr style='margin: 0.8rem 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'>", unsafe_allow_html=True)
 
@@ -166,12 +164,13 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
         st.markdown("#### ➕ Create New Task")
         with st.form("create_task_form", clear_on_submit=True):
             t_title = st.text_input("Task Title", placeholder="e.g. Submit quarterly report")
-            t_type = st.radio("Task Duration Type", ["Short-Term", "Long-Term"], horizontal=True)
+            t_type = st.radio("Task Duration Type", ["Today's Task", "Short-Term", "Long-Term"], horizontal=True, help="Today's Task is a single-day task for today.")
             t_cat = st.selectbox("Category", ["Work", "Development", "Personal", "Health", "Finance", "Study"])
             t_priority = st.select_slider("Priority Level", options=["Low", "Medium", "High"], value="Medium")
 
-            t_target_date = st.date_input("Target Execution Date", datetime.date.today())
-            t_deadline = st.date_input("Final Deadline", datetime.date.today() + datetime.timedelta(days=3))
+            default_target = datetime.datetime.strptime(active_date_str, "%Y-%m-%d").date() if active_date_str else datetime.date.today()
+            t_target_date = st.date_input("Target Execution Date", default_target)
+            t_deadline = st.date_input("Final Deadline", default_target if t_type == "Today's Task" else default_target + datetime.timedelta(days=3))
 
             st.markdown("##### 📅 Google Calendar Preference")
             sync_cal = st.checkbox("Link Task to Google Calendar", value=True, help="Optionally link task to Google Calendar")
