@@ -40,7 +40,13 @@ db: DatabaseManager = st.session_state.db
 h_col1, h_col2, h_col3 = st.columns([4, 2, 1.2])
 
 with h_col1:
-    db_mode_badge = '<span class="badge badge-green">🟢 Google Sheets Sync</span>' if db.mode == "gsheets" else '<span class="badge badge-amber">💾 Local Storage Mode</span>'
+    if db.mode == "supabase":
+        db_mode_badge = '<span class="badge badge-green">⚡ Supabase Cloud DB</span>'
+    elif db.mode == "gsheets":
+        db_mode_badge = '<span class="badge badge-green">🟢 Google Sheets Sync</span>'
+    else:
+        db_mode_badge = '<span class="badge badge-amber">💾 Local Storage Mode</span>'
+
     st.markdown(f"""
     <div class="brand-title">
         🎯 To-Do Journal {db_mode_badge}
@@ -62,7 +68,7 @@ with h_col3:
     st.markdown("<div style='height: 1.7rem;'></div>", unsafe_allow_html=True)
     b_sync, b_theme = st.columns([1, 1])
     with b_sync:
-        if st.button("🔄 Sync", help="Force sync and fetch fresh data from Google Sheets", use_container_width=True):
+        if st.button("🔄 Sync", help="Force sync and fetch fresh data from Database", use_container_width=True):
             st.session_state.db = DatabaseManager()
             if hasattr(st.session_state.db, "reconnect_and_sync"):
                 st.session_state.db.reconnect_and_sync()
@@ -72,25 +78,37 @@ with h_col3:
         st.button(theme_btn_text, on_click=toggle_theme, use_container_width=True)
 
 # -------------------------------------------------------------
-# Google Sheets Setup Expander (Helpful for deployment)
+# Database Setup & Configuration Guide
 # -------------------------------------------------------------
-with st.expander("ℹ️ Google Sheets & Deployment Configuration Guide"):
+with st.expander("ℹ️ Database & Deployment Configuration Guide (Supabase / Google Sheets)"):
     st.markdown("""
-    ### How to Connect your Google Sheet:
-    1. Create a Google Sheet named **`ToDo_Journal_DB`** on Google Drive.
-    2. Create a Google Cloud Service Account & download the JSON Key file.
-    3. Share your Google Sheet with the Service Account email (Editor permissions).
-    4. Paste the Service Account credentials into `.streamlit/secrets.toml` or Streamlit Community Cloud Secrets:
+    ### ⚡ Option 1: Supabase Setup (Recommended - 100% Free & Fast):
+    1. Sign up for a free account at [supabase.com](https://supabase.com) and create a project.
+    2. Go to **SQL Editor**, click **New Query**, paste the schema below, and click **Run**:
+    ```sql
+    CREATE TABLE IF NOT EXISTS daily_goals (id TEXT PRIMARY KEY, title TEXT, category TEXT, created_at TEXT, active BOOLEAN DEFAULT TRUE);
+    CREATE TABLE IF NOT EXISTS daily_log (id TEXT PRIMARY KEY, date TEXT, goal_id TEXT, completed BOOLEAN DEFAULT FALSE, updated_at TEXT);
+    CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, title TEXT, type TEXT, category TEXT, priority TEXT, status TEXT, target_date TEXT, deadline TEXT, created_at TEXT, completed_at TEXT, is_longterm BOOLEAN DEFAULT FALSE, calendar_synced BOOLEAN DEFAULT FALSE);
+    CREATE TABLE IF NOT EXISTS subtasks (id TEXT PRIMARY KEY, task_id TEXT, title TEXT, completed BOOLEAN DEFAULT FALSE, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, title TEXT, category TEXT, content TEXT, tags TEXT, is_pinned BOOLEAN DEFAULT FALSE, color TEXT, created_at TEXT, updated_at TEXT);
+    CREATE TABLE IF NOT EXISTS journal_entries (id TEXT PRIMARY KEY, date TEXT, mood TEXT, main_text TEXT, wins TEXT, gratitude TEXT, score_pct REAL DEFAULT 0.0, created_at TEXT);
+    ```
+    3. Go to **Project Settings** ➔ **API** in Supabase, and copy your **URL** and `anon` **Key**.
+    4. Paste into `.streamlit/secrets.toml` or Streamlit Cloud Secrets:
+    ```toml
+    [supabase]
+    url = "https://your-project-ref.supabase.co"
+    key = "your-anon-public-key"
+    ```
+
+    ---
+
+    ### 🟢 Option 2: Google Sheets Setup:
+    Paste your GCP Service Account JSON into `.streamlit/secrets.toml`:
     ```toml
     [gcp_service_account]
     type = "service_account"
-    project_id = "your-project-id"
-    private_key_id = "your-private-key-id"
-    private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
-    client_email = "your-service-account@your-project.iam.gserviceaccount.com"
-    client_id = "..."
-    auth_uri = "https://accounts.google.com/o/oauth2/auth"
-    token_uri = "https://oauth2.googleapis.com/token"
+    ...
     ```
     *Note: If no secrets are provided, the app seamlessly uses local storage (`local_data.json`).*
     """)
