@@ -147,20 +147,22 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                             db.delete_task(tid)
                             st.rerun()
 
-                    # Subtasks section inside the SAME container card
+                    # Subtasks section toggled EXCLUSIVELY by the Subtasks button beside delete
                     if task_type != "Today's Task":
                         # Keep open if subtasks exist OR if explicitly toggled by user
                         default_expanded = (sub_total > 0)
                         is_expanded = st.session_state.get(f"show_subtasks_{tid}", default_expanded)
 
-                        with st.expander(f"🧩 Subtasks / Mini-Tasks ({sub_completed}/{sub_total}) - {sub_pct}% Done", expanded=is_expanded):
+                        if is_expanded:
+                            st.markdown("<div style='margin-top: 0.8rem; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.6rem;'></div>", unsafe_allow_html=True)
                             if sub_total > 0:
+                                st.caption(f"🧩 Subtasks ({sub_completed}/{sub_total}) - {sub_pct}% Completed")
                                 st.progress(sub_pct / 100.0)
 
                             for st_item in subtasks:
                                 st_id = st_item["id"]
                                 st_comp = st_item.get("completed", False)
-                                s_c1, s_c2, s_c3 = st.columns([0.1, 0.8, 0.1])
+                                s_c1, s_c2, s_c3 = st.columns([0.08, 0.84, 0.08])
                                 with s_c1:
                                     st_chk = st.checkbox(label=f"Complete subtask {st_item['title']}", value=st_comp, key=f"st_chk_{st_id}", label_visibility="collapsed")
                                     if st_chk != st_comp:
@@ -174,7 +176,7 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                                         db.delete_subtask(st_id)
                                         st.rerun()
 
-                            # Add mini task inline input
+                            # Add mini task inline input form
                             with st.form(key=f"add_subtask_form_{tid}", clear_on_submit=True):
                                 sub_title = st.text_input("Add Mini Task", placeholder="e.g. Draft chapter 1, Prepare slide deck", label_visibility="collapsed")
                                 sub_sub = st.form_submit_button("➕ Add Mini Task", use_container_width=True)
