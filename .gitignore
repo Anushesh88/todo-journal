@@ -1,0 +1,12 @@
+# Secrets and credentials (DO NOT PUSH TO GITHUB)
+.streamlit/secrets.toml
+credentials.json
+local_data.json
+
+# Python bytecode & environments
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.DS_Store
