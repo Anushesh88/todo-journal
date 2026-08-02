@@ -55,7 +55,7 @@ def render_daily_goals_tab(db: DatabaseManager, active_date_str: str):
 
     with c_left:
         st.markdown("#### 📋 Today's Daily Checklist")
-        if not goals:
+        if len(goals) == 0:
             st.info("No daily recurring goals found. Add your first daily goal using the panel on the right!")
         else:
             log_map = db.get_daily_log(active_date_str)

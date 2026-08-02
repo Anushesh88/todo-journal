@@ -183,19 +183,21 @@ class DatabaseManager:
     # DAILY GOALS
     # -------------------------------------------------------------
     def get_daily_goals(self) -> list:
-        if self.mode == "local":
-            data = self._load_local_data()
-            return [g for g in data.get("Daily_Goals", []) if g.get("active", True)]
-        else:
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Daily_Goals")
-                if not ws:
-                    return []
-                records = ws.get_all_records()
-                return [r for r in records if str(r.get("active", "")).lower() in ["true", "1"]]
+                if ws:
+                    records = ws.get_all_records()
+                    goals = [r for r in records if str(r.get("active", "True")).strip().lower() in ["true", "1", "yes", "t", ""]]
+                    if goals:
+                        data = self._load_local_data()
+                        data["Daily_Goals"] = goals
+                        self._save_local_data(data)
+                        return goals
             except Exception:
-                data = self._load_local_data()
-                return [g for g in data.get("Daily_Goals", []) if g.get("active", True)]
+                pass
+        data = self._load_local_data()
+        return [g for g in data.get("Daily_Goals", []) if str(g.get("active", "True")).strip().lower() in ["true", "1", "yes", "t", ""]]
 
     def add_daily_goal(self, title: str, category: str = "General") -> str:
         goal_id = f"dg_{int(datetime.datetime.now().timestamp())}"
@@ -207,29 +209,28 @@ class DatabaseManager:
             "created_at": created_at,
             "active": True
         }
-        if self.mode == "local":
-            data = self._load_local_data()
-            data["Daily_Goals"].append(new_goal)
-            self._save_local_data(data)
-        else:
+        # Always update local cache
+        data = self._load_local_data()
+        if "Daily_Goals" not in data:
+            data["Daily_Goals"] = []
+        data["Daily_Goals"].append(new_goal)
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Daily_Goals")
                 if ws:
                     ws.append_row([goal_id, title, category, created_at, "True"])
-                else:
-                    raise Exception("Worksheet not accessible")
             except Exception:
-                data = self._load_local_data()
-                data["Daily_Goals"].append(new_goal)
-                self._save_local_data(data)
+                pass
         return goal_id
 
     def delete_daily_goal(self, goal_id: str):
-        if self.mode == "local":
-            data = self._load_local_data()
-            data["Daily_Goals"] = [g for g in data["Daily_Goals"] if g["id"] != goal_id]
-            self._save_local_data(data)
-        else:
+        data = self._load_local_data()
+        data["Daily_Goals"] = [g for g in data.get("Daily_Goals", []) if str(g["id"]) != str(goal_id)]
+        self._save_local_data(data)
+
+        if self.mode == "gsheets":
             try:
                 ws = self._get_or_create_worksheet("Daily_Goals")
                 if ws:
@@ -239,9 +240,7 @@ class DatabaseManager:
                             ws.delete_rows(idx)
                             break
             except Exception:
-                data = self._load_local_data()
-                data["Daily_Goals"] = [g for g in data["Daily_Goals"] if g["id"] != goal_id]
-                self._save_local_data(data)
+                pass
 
     # -------------------------------------------------------------
     # DAILY LOG & SCORES
