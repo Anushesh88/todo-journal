@@ -64,33 +64,34 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                 sub_total = len(subtasks)
                 sub_pct = int((sub_completed / sub_total) * 100) if sub_total > 0 else 0
 
-                # Priority Badge
+                # Priority Badge & CSS styling
                 p_cls = "badge-red" if priority == "High" else ("badge-amber" if priority == "Medium" else "badge-blue")
                 type_cls = "badge-green" if task_type == "Today's Task" else ("badge-purple" if is_longterm else "badge-blue")
 
-                with st.container():
+                # Single unified card container
+                with st.container(border=True):
+                    # Header: Badges & Deadline
                     st.markdown(f"""
-                    <div class="item-card {'completed' if is_completed else ''}">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                            <div>
-                                <span class="badge {type_cls}">{task_type}</span>
-                                <span class="badge {p_cls}">{priority} Priority</span>
-                                <span class="badge {'badge-green' if is_completed else 'badge-amber'}">{status}</span>
-                            </div>
-                            <div style="font-size: 0.8rem; color: #71717a;">
-                                📅 Deadline: <strong>{deadline}</strong>
-                            </div>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <div>
+                            <span class="badge {type_cls}">{task_type}</span>
+                            <span class="badge {p_cls}">{priority} Priority</span>
+                            <span class="badge {'badge-green' if is_completed else 'badge-amber'}">{status}</span>
                         </div>
-                        <div style="margin-top: 0.6rem; font-size: 1.05rem; font-weight: 700;">
-                            {title}
+                        <div style="font-size: 0.82rem; color: #71717a;">
+                            📅 Deadline: <strong>{deadline}</strong>
                         </div>
+                    </div>
+                    <div style="margin: 0.6rem 0 0.8rem 0; font-size: 1.08rem; font-weight: 700;">
+                        {title}
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # Controls row
-                    c1, c2, c3, c4 = st.columns([1.2, 1, 1, 0.4])
+                    # Controls row (Status, GCal, ICS, Subtask toggle, Delete)
+                    c_cols = [1.2, 1, 1, 0.8, 0.4] if task_type != "Today's Task" else [1.2, 1, 1, 0.4]
+                    cols = st.columns(c_cols)
 
-                    with c1:
+                    with cols[0]:
                         new_status = st.selectbox(
                             "Status",
                             ["Pending", "In Progress", "Completed"],
@@ -102,7 +103,7 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                             db.update_task_status(tid, new_status)
                             st.rerun()
 
-                    with c2:
+                    with cols[1]:
                         show_cal = task.get("calendar_synced", True)
                         if show_cal:
                             gcal_url = generate_gcal_url(
@@ -111,29 +112,48 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                                 start_date=task.get("target_date", active_date_str),
                                 end_date=deadline
                             )
-                            st.markdown(f'<a href="{gcal_url}" target="_blank" style="text-decoration:none;"><button style="background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid #3b82f6; border-radius: 6px; padding: 5px 12px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">📅 Google Cal Link</button></a>', unsafe_allow_html=True)
+                            st.markdown(f'<a href="{gcal_url}" target="_blank" style="text-decoration:none;"><button style="width:100%; background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid #3b82f6; border-radius: 6px; padding: 5px 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer;">📅 GCal Link</button></a>', unsafe_allow_html=True)
                         else:
                             st.caption("Calendar Unlinked")
 
-                    with c3:
+                    with cols[2]:
                         if show_cal:
                             ics_data = generate_ics_content(title, f"Priority: {priority}\nDeadline: {deadline}", task.get("target_date", active_date_str), deadline)
                             st.download_button(
-                                label="📥 .ICS File",
+                                label="📥 .ICS",
                                 data=ics_data,
                                 file_name=f"{title.replace(' ', '_')}.ics",
                                 mime="text/calendar",
-                                key=f"ics_dl_{tid}"
+                                key=f"ics_dl_{tid}",
+                                use_container_width=True
                             )
 
-                    with c4:
+                    # Subtasks toggle button beside delete button
+                    if task_type != "Today's Task":
+                        with cols[3]:
+                            sub_btn_label = f"🧩 Subtasks ({sub_total})"
+                            if st.button(sub_btn_label, key=f"btn_toggle_subtasks_{tid}", use_container_width=True):
+                                # Toggle session state flag
+                                current_flag = st.session_state.get(f"show_subtasks_{tid}", (sub_total > 0))
+                                st.session_state[f"show_subtasks_{tid}"] = not current_flag
+                                st.rerun()
+
+                        del_col = cols[4]
+                    else:
+                        del_col = cols[3]
+
+                    with del_col:
                         if st.button("🗑️", key=f"del_task_{tid}"):
                             db.delete_task(tid)
                             st.rerun()
 
-                    # Subtasks / Mini-Tasks section for Short-Term & Long-Term Tasks ONLY
+                    # Subtasks section inside the SAME container card
                     if task_type != "Today's Task":
-                        with st.expander(f"🧩 Subtasks / Mini-Tasks ({sub_completed}/{sub_total}) - {sub_pct}% Done", expanded=False):
+                        # Keep open if subtasks exist OR if explicitly toggled by user
+                        default_expanded = (sub_total > 0)
+                        is_expanded = st.session_state.get(f"show_subtasks_{tid}", default_expanded)
+
+                        with st.expander(f"🧩 Subtasks / Mini-Tasks ({sub_completed}/{sub_total}) - {sub_pct}% Done", expanded=is_expanded):
                             if sub_total > 0:
                                 st.progress(sub_pct / 100.0)
 
@@ -160,9 +180,8 @@ def render_task_manager_tab(db: DatabaseManager, active_date_str: str):
                                 sub_sub = st.form_submit_button("➕ Add Mini Task", use_container_width=True)
                                 if sub_sub and sub_title.strip():
                                     db.add_subtask(tid, sub_title.strip())
+                                    st.session_state[f"show_subtasks_{tid}"] = True
                                     st.rerun()
-
-                    st.markdown("<hr style='margin: 0.8rem 0; border: 0; border-top: 1px solid rgba(255,255,255,0.08);'>", unsafe_allow_html=True)
 
     with t_col2:
         st.markdown("#### ➕ Create New Task")
